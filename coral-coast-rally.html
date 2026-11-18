@@ -1,0 +1,104 @@
+<title>Coral Coast Rally</title>
+<style>
+  :root { --blue:#1668ff; --cyan:#22d3ee; --gold:#ffc83a; --ink:#07224a; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; height:100%; overflow:hidden; background:#7cc7f2; font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color:#fff; user-select:none; -webkit-user-select:none; touch-action:none; }
+  canvas#game { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .hud { position:fixed; pointer-events:none; text-shadow:0 2px 0 rgba(0,30,80,.55), 0 0 14px rgba(0,40,120,.35); font-style:italic; font-weight:800; }
+  #hud { opacity:0; transition:opacity .4s; }
+  #hud.on { opacity:1; }
+  .panel { background:linear-gradient(180deg, rgba(8,40,110,.62), rgba(8,30,80,.42)); border:1.5px solid rgba(255,255,255,.28); border-radius:16px; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); padding:10px 16px; }
+  #tl { top:16px; left:16px; display:flex; gap:10px; align-items:stretch; }
+  #posBox { font-size:54px; line-height:1; display:flex; align-items:baseline; gap:2px; }
+  #posBox small { font-size:20px; opacity:.85; }
+  #posBox .tot { font-size:18px; opacity:.7; margin-left:6px; }
+  .lbl { font-size:11px; letter-spacing:.14em; opacity:.75; font-style:normal; font-weight:700; }
+  .val { font-size:26px; line-height:1.1; font-variant-numeric:tabular-nums; }
+  #tr { top:16px; right:16px; text-align:right; display:flex; gap:10px; }
+  #coinsBox .val { color:var(--gold); }
+  #br { right:18px; bottom:18px; text-align:right; min-width:210px; }
+  #speed { font-size:72px; line-height:.9; font-variant-numeric:tabular-nums; }
+  #speedUnit { font-size:16px; opacity:.8; margin-left:6px; }
+  #nitro { margin-top:10px; height:14px; border-radius:8px; background:rgba(0,20,60,.55); border:1.5px solid rgba(255,255,255,.35); overflow:hidden; transform:skewX(-14deg); }
+  #nitroFill { height:100%; width:50%; background:linear-gradient(90deg,#1668ff,#22d3ee,#e8ffff); box-shadow:0 0 14px #22d3ee; transition:width .08s linear; }
+  #bl { left:16px; bottom:16px; }
+  #mini { width:168px; height:168px; display:block; }
+  #center { left:0; right:0; top:26%; text-align:center; font-size:120px; letter-spacing:.02em; opacity:0; transform:scale(.6); transition:opacity .18s, transform .18s; }
+  #center.show { opacity:1; transform:scale(1); }
+  #center.small { font-size:54px; }
+  #wrong { left:0; right:0; top:16%; text-align:center; font-size:34px; color:#ffdf4a; display:none; }
+  .overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px; background:radial-gradient(ellipse at center, rgba(4,30,90,.12), rgba(4,24,70,.55)); transition:opacity .5s; }
+  .overlay.hide { opacity:0; pointer-events:none; }
+  h1 { margin:0; font-size:clamp(44px, 9vw, 112px); line-height:.9; font-style:italic; font-weight:900; letter-spacing:-.02em; text-shadow:0 4px 0 #0a3fb0, 0 8px 0 rgba(4,24,70,.5), 0 0 50px rgba(34,211,238,.55); }
+  h1 span { color:var(--gold); text-shadow:0 4px 0 #b8660a, 0 8px 0 rgba(4,24,70,.5), 0 0 50px rgba(255,200,58,.5); }
+  .tag { margin:14px 0 26px; font-size:clamp(14px,2.2vw,20px); font-weight:600; letter-spacing:.18em; text-transform:uppercase; text-shadow:0 2px 8px rgba(0,30,90,.7); }
+  button.go { pointer-events:auto; cursor:pointer; font:inherit; font-style:italic; font-weight:900; font-size:clamp(22px,3.4vw,34px); letter-spacing:.06em; color:#fff; padding:16px 54px; border-radius:999px; border:2px solid rgba(255,255,255,.7); background:linear-gradient(180deg,#39a0ff,#1668ff 55%,#0b49c9); box-shadow:0 8px 0 #07318f, 0 18px 40px rgba(0,40,140,.5), inset 0 2px 0 rgba(255,255,255,.5); transition:transform .1s, box-shadow .1s; }
+  button.go:hover { transform:translateY(-2px); }
+  button.go:active { transform:translateY(5px); box-shadow:0 3px 0 #07318f, 0 8px 20px rgba(0,40,140,.5); }
+  .keys { margin-top:28px; display:flex; flex-wrap:wrap; gap:8px 18px; justify-content:center; font-size:14px; font-weight:600; text-shadow:0 1px 6px rgba(0,30,90,.8); }
+  kbd { display:inline-block; min-width:26px; padding:3px 8px; margin-right:6px; border-radius:7px; background:rgba(255,255,255,.92); color:var(--ink); font:inherit; font-weight:800; box-shadow:0 3px 0 rgba(0,30,90,.5); }
+  #results { margin:22px 0 26px; min-width:min(440px, 90vw); font-style:normal; }
+  #results .row { display:flex; justify-content:space-between; gap:20px; padding:8px 4px; font-size:19px; font-weight:700; border-bottom:1px solid rgba(255,255,255,.18); font-variant-numeric:tabular-nums; }
+  #results .row.me { color:var(--gold); }
+  #results .row:last-child { border:0; }
+  #touch { display:none; }
+  .tbtn { position:fixed; pointer-events:auto; width:84px; height:84px; border-radius:50%; background:rgba(8,40,110,.45); border:2px solid rgba(255,255,255,.5); display:flex; align-items:center; justify-content:center; font-size:30px; font-weight:900; font-style:normal; }
+  .tbtn.on { background:rgba(34,211,238,.6); }
+  #tL { left:18px; bottom:200px; } #tR { left:118px; bottom:200px; }
+  #tN { right:18px; bottom:150px; font-size:15px; } #tB { right:118px; bottom:150px; font-size:15px; }
+  @media (max-width:700px) {
+    #speed { font-size:48px; } #posBox { font-size:38px; } .val { font-size:19px; } #mini { width:110px; height:110px; }
+    #center { font-size:84px; } #br { min-width:150px; } .panel { padding:7px 11px; }
+  }
+
+  #tl { top:calc(16px + env(safe-area-inset-top,0px)); left:calc(16px + env(safe-area-inset-left,0px)); }
+  #tr { top:calc(16px + env(safe-area-inset-top,0px)); right:calc(16px + env(safe-area-inset-right,0px)); }
+  #bl { bottom:calc(16px + env(safe-area-inset-bottom,0px)); left:calc(16px + env(safe-area-inset-left,0px)); }
+  #br { bottom:calc(18px + env(safe-area-inset-bottom,0px)); right:calc(18px + env(safe-area-inset-right,0px)); }
+  :root { color-scheme: light; }
+</style>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div id="tl" class="hud">
+    <div class="panel"><div class="lbl">POSITION</div><div id="posBox"><span id="pos">6</span><small id="posSuf">th</small><span class="tot">/ 6</span></div></div>
+    <div class="panel"><div class="lbl">LAP</div><div class="val"><span id="lap">1</span> / <span id="laps">3</span></div></div>
+  </div>
+  <div id="tr" class="hud">
+    <div class="panel" id="coinsBox"><div class="lbl">COINS</div><div class="val">● <span id="coins">0</span></div></div>
+    <div class="panel"><div class="lbl">TIME</div><div class="val" id="time">0:00.0</div></div>
+  </div>
+  <div id="bl" class="hud panel"><canvas id="mini" width="336" height="336"></canvas></div>
+  <div id="br" class="hud panel">
+    <div><span id="speed">0</span><span id="speedUnit">KM/H</span></div>
+    <div class="lbl" style="margin-top:6px">NITRO</div>
+    <div id="nitro"><div id="nitroFill"></div></div>
+  </div>
+  <div id="wrong" class="hud">⟲ WRONG WAY</div>
+  <div id="touch">
+    <div class="tbtn" id="tL">◀</div><div class="tbtn" id="tR">▶</div>
+    <div class="tbtn" id="tB">BRAKE</div><div class="tbtn" id="tN">NITRO</div>
+  </div>
+</div>
+<div id="center" class="hud"></div>
+
+<div id="menu" class="overlay">
+  <h1>CORAL COAST<br><span>RALLY</span></h1>
+  <div class="tag">Beach buggy racing · 3 laps · 6 racers</div>
+  <button class="go" id="startBtn">START RACE</button>
+  <div class="keys">
+    <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>/ arrows — drive</div>
+    <div><kbd>Space</kbd>drift</div>
+    <div><kbd>Shift</kbd>nitro</div>
+    <div><kbd>R</kbd>reset</div>
+    <div><kbd>M</kbd>mute</div>
+  </div>
+</div>
+
+<div id="finish" class="overlay hide">
+  <h1 id="finTitle">FINISH!</h1>
+  <div id="results" class="panel"></div>
+  <button class="go" id="againBtn">RACE AGAIN</button>
+</div>
+
+<script src="game.js"></script>

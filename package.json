@@ -1,0 +1,18 @@
+{
+  "name": "scratch-2026-11-16-17988b",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "assets": "B=/Applications/Blender.app/Contents/MacOS/Blender; $B -b --factory-startup -P blender/buggy.py -- dist/assets && $B -b --factory-startup -P blender/props.py -- dist/assets && $B -b --factory-startup -P blender/textures.py -- dist/assets && $B -b --factory-startup -P blender/gate.py -- dist/assets",
+    "build": "esbuild src/main.js --bundle --minify --format=iife '--define:import.meta.url=\"https://localhost/assets/\"' --outfile=game.js && cp index.html game.js dist/"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "peerjs": "^1.5.5",
+    "three": "^0.187.0"
+  }
+}
