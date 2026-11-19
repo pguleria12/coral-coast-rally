@@ -361,7 +361,7 @@ function syncMusic() {
   const lbl = musicOn ? '🎵 Music: ON' : '🔇 Music: OFF';
   for (const id of ['musicBtn', 'musicHud']) { const b = $(id); if (b) { b.textContent = id === 'musicHud' ? (play ? '🎵' : '🔇') : lbl; b.classList.toggle('off', !play); } }
 }
-function toggleMusic() { initAudio(); if (AC && AC.state === 'suspended') AC.resume(); musicOn = !musicOn; store.set('ccr_music', musicOn); if (musicOn) muted = false; syncMusic(); }
+function toggleMusic() { unlockAudio(); musicOn = !musicOn; store.set('ccr_music', musicOn); if (musicOn) muted = false; syncMusic(); }
 function updateAudio() {
   if (music) music.setLevel(state === 'race' || state === 'countdown' || state === 'finish' ? 1 : 0.7);
   if (!AC || !locals.length) return; const lead = locals.reduce((a, L) => Math.abs(L.car.vf) > Math.abs(a.vf) ? L.car : a, locals[0].car);
@@ -493,7 +493,7 @@ function bindViews() {
   views.forEach((v, i) => { v.car = locals[i] ? locals[i].car : null; if (v.car) v.car.view = v; v.snap = true; v.hud.tag.textContent = locals[i] ? (mode === 'split' ? `P${i + 1} · ` : '') + locals[i].prof.nick : ''; v.hud.tag.style.display = mode === 'split' ? '' : 'none'; });
 }
 function startRace() {
-  initAudio(); if (AC && AC.state === 'suspended') AC.resume();
+  unlockAudio();
   resetRace(); state = 'countdown'; countT = 3.6; if (touch.tiltOk) recentre(); lastCount = 9; resultsOpen = false;
   $('menu').classList.add('hide'); $('finish').classList.add('hide'); $('huds').classList.add('on');
   views.forEach(v => { v.snap = true; v.cam.clearViewOffset(); });
@@ -658,8 +658,31 @@ function setTimeOfDay(n, quiet) { if (n === isNight) return; isNight = n; if (!q
 musicOn = store.get('ccr_music', true);
 syncMusic(); $('musicBtn').onclick = toggleMusic; $('qualBtn').onclick = cycleQuality; $('musicHud').onclick = (e) => { e.stopPropagation(); toggleMusic(); };
 // browsers only allow audio after a user gesture: start menu music on the first tap/key
-const firstGesture = () => { initAudio(); if (AC && AC.state === 'suspended') AC.resume(); syncMusic(); removeEventListener('pointerdown', firstGesture, true); removeEventListener('keydown', firstGesture, true); };
-addEventListener('pointerdown', firstGesture, true); addEventListener('keydown', firstGesture, true);
+// Phones only let audio start inside a real tap (touchend / click, not pointerdown), so keep trying on every
+// gesture until the context is running, and re-arm if the OS suspends it (calls, backgrounding, lock screen).
+// iPhones also mute Web Audio when the silent switch is on unless the page claims a 'playback' audio session:
+// navigator.audioSession does that on iOS 17+, and a looping silent <audio> element does it on older versions.
+let silentEl = null;
+function silentWav() { const n = 4410, b = new ArrayBuffer(44 + n * 2), v = new DataView(b), w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 44100, true); v.setUint32(28, 88200, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true); return URL.createObjectURL(new Blob([b], { type: 'audio/wav' })); }
+const GESTURES = ['touchend', 'click', 'keydown', 'pointerup'];
+function unlockAudio() {
+  initAudio(); if (!AC) return;
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  if (!navigator.audioSession && !silentEl && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 0) {
+    silentEl = document.createElement('audio'); silentEl.src = silentWav(); silentEl.loop = true; silentEl.setAttribute('playsinline', ''); silentEl.volume = 0.01; }
+  if (silentEl && silentEl.paused) silentEl.play().catch(() => {});
+  const s = AC.createBufferSource(); s.buffer = AC.createBuffer(1, 1, 22050); s.connect(AC.destination); s.start(0);   // iOS needs a sound started in the gesture
+  if (AC.state !== 'running') AC.resume().then(syncMusic, () => {});
+  syncMusic();
+  if (AC.state === 'running') armUnlock(false);
+}
+function armUnlock(on) { for (const ev of GESTURES) (on ? addEventListener : removeEventListener)(ev, unlockAudio, true); }
+armUnlock(true);
+addEventListener('pointerdown', () => initAudio(), { capture: true, once: true });   // create early; desktop browsers unlock here
+document.addEventListener('visibilitychange', () => { if (!AC || document.hidden) return; if (AC.state !== 'running') { AC.resume().then(syncMusic, () => {}); armUnlock(true); } });
+const watchAC = setInterval(() => { if (AC) { clearInterval(watchAC); AC.addEventListener('statechange', () => { if (AC.state !== 'running') armUnlock(true); else syncMusic(); }); } }, 500);
 $('trackSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (b) { initAudio(); setTrack(b.dataset.t); } });
 document.querySelectorAll('#todSeg button').forEach(b => b.onclick = () => setTimeOfDay(b.dataset.n === '1'));
 function refreshMain() { renderPickers(); if (!me) return; $('nickLbl').textContent = me.nick; $('walletLbl').textContent = me.coins; $('statsLbl').textContent = `${me.wins} wins · ${me.races} races`; }
@@ -921,7 +944,7 @@ function frame(now) {
   else { me = newProfile('Racer'); if (legacy && !me.best) me.best = legacy; setupSolo(); showScreen('scrNick'); }
   resetRace(); applyQuality();
 }
-window.__game = { SCDBG, get SC() { return SC; }, get N() { return N; }, get SP() { return SP; }, get track() { return trackId; }, setTrack, setTimeOfDay, placeCar, cars, views, get locals() { return locals; }, get state() { return state; }, get mode() { return mode; }, get raceT() { return raceT; }, startRace, setupSplit, getProfile, get me() { return me; }, net, renderer, profiles, board, ASSETS, setLook, createMusic };
+window.__game = { SCDBG, get SC() { return SC; }, get N() { return N; }, get SP() { return SP; }, get track() { return trackId; }, setTrack, setTimeOfDay, placeCar, cars, views, get locals() { return locals; }, get state() { return state; }, get mode() { return mode; }, get raceT() { return raceT; }, startRace, setupSplit, getProfile, get me() { return me; }, net, renderer, profiles, board, ASSETS, setLook, createMusic, get AC() { return AC; } };
 requestAnimationFrame(frame);
 
 // Blender assets stream in after the first frame; once ready, rebuild the world and the buggies with them.
