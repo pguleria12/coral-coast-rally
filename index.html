@@ -180,8 +180,10 @@
   #dial text { fill:#fff; font-size:11px; font-weight:900; font-style:italic; text-anchor:middle; letter-spacing:.04em; pointer-events:none; }
   #dial text.ic { font-size:18px; font-style:normal; } #dial .hub { fill:rgba(255,255,255,.18); stroke:rgba(255,255,255,.5); stroke-width:1.5; } #dial .hubt { font-size:8.5px; opacity:.8; }
   @media (max-height:500px) { #dial { width:160px; height:160px; } #tL, #tR, #wheel { bottom:calc(128px + env(safe-area-inset-bottom,0px)); } }
-  body.touchui .phud .br { right:auto; left:50%; transform:translateX(-50%); bottom:calc(10px + env(safe-area-inset-bottom,0px)); min-width:0; text-align:center; }
-  body.touchui .phud .br .speed { font-size:40px; }
+  /* touch: speed + nitro sit top-right under the time so the bottom stays clear for the buggy and the controls */
+  body.touchui .phud .br { right:calc(16px + env(safe-area-inset-right,0px)); left:auto; transform:none; bottom:auto; top:calc(84px + env(safe-area-inset-top,0px)); min-width:0; width:132px; padding:6px 10px; text-align:right; }
+  body.touchui .phud .br .speed { font-size:30px; } body.touchui .phud .br .speedUnit { font-size:11px; } body.touchui .phud .br .lbl { margin-top:2px !important; }
+  body.touchui #musicHud { left:auto; transform:none; right:calc(16px + env(safe-area-inset-right,0px)); top:calc(170px + env(safe-area-inset-top,0px)); width:34px; height:34px; font-size:15px; }
   body.touchui .phud .bl { bottom:auto; top:calc(92px + env(safe-area-inset-top,0px)); } body.touchui .phud .mini { width:96px; height:96px; }
   body.touchui #tL, body.touchui #tR, body.touchui #wheel { bottom:calc(16px + env(safe-area-inset-bottom,0px)) !important; }
   body.touchui #wheel { bottom:calc(30px + env(safe-area-inset-bottom,0px)) !important; }
@@ -303,6 +305,6 @@
 <div id="invite"><span>🏁 <b id="invFrom"></b> challenges you to a race!</span><button id="invYes">ACCEPT</button><button id="invNo">Decline</button></div>
 <div id="toast"></div>
 
-<script src="game.js?v=11"></script>
+<script src="game.js?v=12"></script>
 </body>
 </html>

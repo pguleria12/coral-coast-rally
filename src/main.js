@@ -879,6 +879,9 @@ function updateCam(v, dt) {
     if (v.shake > 0 || bst) { const s = v.shake * 0.5 + bst * 0.05; cam.position.x += (Math.random() - 0.5) * s; cam.position.y += (Math.random() - 0.5) * s; v.shake = Math.max(0, v.shake - dt * 1.5); }
     look.set(P.x + Math.sin(P.h) * 5, P.y + 1.5, P.z + Math.cos(P.h) * 5); cam.lookAt(look);
     cam.fov = lerp(cam.fov, 60 + sf * 13 + bst * 9, Math.min(1, dt * 4));
+    // touch screens: the steering buttons and dial cover the bottom of the screen, so lift the buggy above them
+    const W = v.rect.w, H = v.rect.h;
+    if (touch.on) cam.setViewOffset(W, H, 0, H * (H > W ? 0.13 : 0.16), W, H); else if (cam.view && cam.view.enabled) cam.clearViewOffset();
   }
   cam.updateProjectionMatrix();
 }
