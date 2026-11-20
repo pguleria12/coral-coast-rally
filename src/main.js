@@ -203,7 +203,7 @@ function setLook(c, look) {
 }
 function placeCar(c, i, lat) {
   i = (i + N) % N; c.x = TX[i] + NX[i] * lat; c.z = TZ[i] + NZ[i] * lat; c.h = HD[i]; c.idx = i; c.mi = i; c.sc = false; c.si = 0; c.y = Math.max(groundH(c.x, c.z), -0.55); c.gPrev = c.y;
-  c.vx = c.vz = c.vy = 0; c.steer = 0; c.grounded = true; c.air = 0; c.up.set(0, 1, 0);
+  c.vx = c.vz = c.vy = 0; c.vf = c.vl = 0; c.steer = 0; c.grounded = true; c.air = 0; c.up.set(0, 1, 0);
 }
 let mode = 'solo', locals = [], netHost = false, splitLayout = store.get('ccr_split', 'lr');
 let finishOrder = 0, raceT = 0, state = 'menu', countT = 0, lastCount = 9, resultsOpen = false, resultsT = 0;
