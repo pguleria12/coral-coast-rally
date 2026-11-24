@@ -8,6 +8,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createNet } from './net.js';
 import { createMusic } from './music.js';
+import { makeWorn, wearUniforms, clearDamage, addDamage, WEAR_GLOBAL } from './wear.js';
 import { ASSETS, loadAssets } from './assets.js';
 import { clamp, lerp, wrapA, rand, canvasTex, LAPS, RW, WALL, MAXV, ACC, GRAV, SUN, AUTO, renderer, scene, camera, sky, sun, dummy, nearestIdx, groundH,
   TX, TZ, HD, NX, NZ, VC, CURV, N, SP, pads, coins, coinMesh, buildWorld, worldTick, followWeather, gripAt, trackFrame, SC, THEMES, TRACK_IDS, setNight, theme, SCDBG } from './world.js';
@@ -25,7 +26,7 @@ const Y = new THREE.Vector3(0, 1, 0);
 function tube(a, b, r, mat) { const d = new THREE.Vector3().subVectors(b, a), m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 7), mat);
   m.position.copy(a).addScaledVector(d, 0.5); m.quaternion.setFromUnitVectors(Y, d.normalize()); return m; }
 const glowTex = canvasTex(128, 128, (g, w, h) => { const gr = g.createRadialGradient(64, 64, 4, 64, 64, 64); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.clearRect(0, 0, w, h); g.fillStyle = gr; g.fillRect(0, 0, w, h); });
-function buildBuggy(look) {
+function buildBuggy(look, liv) {
   const sports = look.body === 'sports', big = look.tyres === 'big';
   const WR = big ? 0.86 : 0.62, WW = big ? 0.78 : 0.52, L = WR - 0.62, WX = big ? 1.2 : 1.08;
   const V = (x, y, z) => new THREE.Vector3(x, y + L, z);
@@ -37,14 +38,23 @@ function buildBuggy(look) {
   // driver
   const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.27, 14, 10), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25 }));
   const visor = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), new THREE.MeshStandardMaterial({ color: 0x10151c, roughness: 0.1, metalness: 0.8 }));
-  let exY = 1.2, exZ = -2.0;
+  let exY = 1.2, exZ = -2.0, dmgRoot = null;
+  const wearU = wearUniforms(0.5);
   const BB = ASSETS.ready && ASSETS.cars[sports ? 'buggy_sports' : 'buggy_classic'];
   if (BB) {
     // Blender body (blender/buggy.py): swap its named materials for this car's livery
     const suit = new THREE.MeshStandardMaterial({ color: look.paint, roughness: 0.7 }), accent = new THREE.MeshStandardMaterial({ color: look.rim, roughness: 0.35, metalness: 0.3 });
     const MAP = { Paint: paint, Dark: darkMat, Chrome: chromeMat, Tire: tireMat, Rim: rim, Lamp: lamp, Suit: suit, Accent: accent };
     const b = BB.clone(); b.position.y = L;
-    b.traverse(o => { if (o.isMesh) { const m = MAP[o.material.name]; if (m) o.material = m; else SHARED.add(o.material); } });
+    // baked wear (grime, chipped edges, mud) + crash damage: every worn material is this car's own copy
+    const WT = ASSETS.wear[sports ? 'buggy_sports' : 'buggy_classic'], SCR = { Paint: 1, Accent: 1, Dark: 0.7, Rim: 0.6, Seat: 0.25, Suit: 0.2, Helmet: 0.5, Tire: 0.15, Chrome: 0 }, own = {};
+    const DEC = liv && (sports ? { sideBox: new THREE.Vector4(-1.95, 1.95, 0.64, 1.1), hoodBox: new THREE.Vector4(-0.62, 0.62, 0.55, 1.75) }
+                               : { sideBox: new THREE.Vector4(-1.68, 1.62, 0.7, 1.24), hoodBox: new THREE.Vector4(-0.62, 0.62, 0.62, 1.72) });
+    if (DEC) Object.assign(DEC, liveryTex(look, liv));
+    const worn = (name, m) => own[name] || (own[name] = makeWorn(SHARED.has(m) || !MAP[name] ? m.clone() : m, WT, wearU, SCR[name], name === 'Paint' || name === 'Accent' ? DEC : null));
+    b.traverse(o => { if (o.isMesh) { const n = o.material.name, m = MAP[n] || o.material;
+      if (WT && n in SCR) o.material = worn(n, m); else { o.material = m; if (!MAP[n]) SHARED.add(m); } } });
+    dmgRoot = b;
     body.add(b);
     if (sports) { exY = 1.12; exZ = -2.25; }
   } else if (!sports) {
@@ -109,14 +119,16 @@ function buildBuggy(look) {
   if (look.glow) { const gm = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 4.6), new THREE.MeshBasicMaterial({ map: glowTex, color: new THREE.Color(look.glow).multiplyScalar(2.2), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
     gm.rotation.x = -Math.PI / 2; gm.position.y = 0.08; gm.renderOrder = 3; G.add(gm); flames.glow = gm; }
   // wheels
-  const wheels = [];
+  const wheels = [], WWT = ASSETS.ready && ASSETS.wear[big ? 'wheel_big' : 'wheel_std'], wmats = {};
+  const wheelMat = (n) => { const base = { Tire: tireMat, Rim: rim, Dark: darkMat, Chrome: chromeMat }[n]; if (!base) return null; if (!WWT) return base;
+    return wmats[n] || (wmats[n] = makeWorn(base.clone(), WWT, wearU, { Tire: 0.15, Rim: 0.6, Dark: 0.7, Chrome: 0 }[n])); };
   const tg = new THREE.CylinderGeometry(WR, WR, WW, 22); tg.rotateZ(Math.PI / 2);
   const rg = new THREE.CylinderGeometry(WR * 0.6, WR * 0.6, WW + 0.02, 14); rg.rotateZ(Math.PI / 2);
   const kg = new THREE.BoxGeometry(WW - 0.02, big ? 0.14 : 0.09, WR * 2.1);
   for (const [sx, z, front] of [[1, 1.18, 1], [-1, 1.18, 1], [1, -1.2, 0], [-1, -1.2, 0]]) {
     const x = sx * WX, pivot = new THREE.Group(), spin = new THREE.Group(); pivot.position.set(x, WR, z); pivot.add(spin);
     const BW = ASSETS.ready && ASSETS.cars[big ? 'wheel_big' : 'wheel_std'];
-    if (BW) { const w = BW.clone(); w.scale.set(WW, WR, WR); w.traverse(o => { if (o.isMesh) o.material = { Tire: tireMat, Rim: rim, Dark: darkMat, Chrome: chromeMat }[o.material.name] || o.material; }); spin.add(w); }
+    if (BW) { const w = BW.clone(); w.scale.set(WW, WR, WR); w.traverse(o => { if (o.isMesh) o.material = wheelMat(o.material.name) || o.material; }); spin.add(w); }
     else {
     spin.add(new THREE.Mesh(tg, tireMat), new THREE.Mesh(rg, rim));
     for (let k = 0; k < (big ? 8 : 6); k++) { const kn = new THREE.Mesh(kg, tireMat); kn.rotation.x = k * Math.PI / (big ? 8 : 6); spin.add(kn); }
@@ -126,7 +138,7 @@ function buildBuggy(look) {
     body.add(tube(V(sx * 0.6, 0.85, z), new THREE.Vector3(x * 0.82, WR + 0.04, z), big ? 0.07 : 0.05, darkMat));
   }
   G.traverse(o => { if (o.isMesh) o.castShadow = o.material.blending !== THREE.AdditiveBlending; });
-  return { G, body, wheels, flames, wr: WR };
+  return { G, body, wheels, flames, wr: WR, wearU, dmgRoot };
 }
 function disposeModel(m) { m.G.traverse(o => { if (o.isMesh) { if (!o.userData.sharedGeo) o.geometry.dispose(); if (!SHARED.has(o.material)) o.material.dispose(); } }); }
 
@@ -192,14 +204,52 @@ const sortedBoard = () => Object.values(board).sort((a, b) => b.wins - a.wins ||
 for (const p of Object.values(profiles)) mergeBoard([boardEntry(p)]);
 
 // ───────────────────────── cars ─────────────────────────
+// how dirty each buggy starts a race (bots vary; the player's starts moderately clean) and how much mud it can pick up
+const wearBase = (c) => c.k === 5 ? 0.35 : 0.3 + 0.45 * (((Math.sin(c.k * 12.9898) * 43758.5453) % 1 + 1) % 1);
+const MUD = { beach: 0xc2a477, desert: 0xb87443, country: 0x4b3423, snow: 0xc9d2dc };
+WEAR_GLOBAL.mudCol.value.set(MUD[trackId]);
 const cars = LIVERY.map((_, k) => ({ k, name: BOT_NAMES[k], model: null, lookKey: '', ctrl: 'ai', st: BASE_ST, view: null, prof: null, x: 0, y: 0, z: 0, h: 0, vx: 0, vz: 0, vy: 0, steer: 0, surf: 1, idx: 0, mi: -1, sc: false, si: 0, dist: 0, lap: -1, lat: 0, off: 0,
   grounded: true, air: 0, gPrev: 0, up: new THREE.Vector3(0, 1, 0), boostT: 0, nitro: 0.5, drift: 0, base: [0.9, 0.925, 0.95, 0.97, 0.99, 1][k], skill: 1,
   lane: 0, laneT: 0, laneTarget: 0, finished: false, finishT: 0, lapStart: 0, bestLap: 0, coins: 0, wrongT: 0, spin: 0, emit: 0, vf: 0, vl: 0, net: null, reward: null }));
+// race liveries: team name along the side panels and a race number on the bonnet (invented teams and sponsors)
+const TEAMS = ['REEF RAIDERS', 'SUNDOG RACING', 'MANGO MOTORSPORT', 'ORCHID WORKS', 'BLAZE RALLY', 'CORAL COAST'];
+const SPONSORS = ['CORAL OIL', 'GRIPTEK', 'NITROX', 'DUNELINE', 'KNOBBY CO', 'TIDE FUEL'];
+const liveryOf = (c) => {
+  const team = c.ctrl === 'ai' || c.bot ? TEAMS[c.k] : (c.name || 'RACER').toUpperCase().slice(0, 14);
+  let h = 0; for (const ch of team) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return { team, num: c.bot || c.ctrl === 'ai' ? [77, 23, 45, 88, 12, 31][c.k] : 2 + h % 97, sponsor: SPONSORS[(c.k + h) % SPONSORS.length], sponsor2: SPONSORS[(c.k + h + 3) % SPONSORS.length] };
+};
+const liveryCache = new Map();
+function liveryTex(look, L) {
+  const key = [look.paint, look.rim, L.team, L.num, L.sponsor].join('|'); if (liveryCache.has(key)) return liveryCache.get(key);
+  const pc = new THREE.Color(look.paint), light = pc.r * 0.3 + pc.g * 0.59 + pc.b * 0.11 > 0.55;
+  const ink = light ? '#101318' : '#ffffff', outline = light ? 'rgba(255,255,255,.9)' : 'rgba(8,10,14,.9)', acc = '#' + new THREE.Color(look.rim).getHexString();
+  const side = canvasTex(1024, 160, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    // swoosh stripes along the lower body
+    g.fillStyle = acc; g.beginPath(); g.moveTo(40, 150); g.lineTo(980, 150); g.lineTo(1010, 112); g.lineTo(300, 120); g.lineTo(110, 132); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(10,12,16,.85)'; g.beginPath(); g.moveTo(60, 158); g.lineTo(990, 158); g.lineTo(1000, 146); g.lineTo(80, 150); g.closePath(); g.fill();
+    // team name
+    g.font = 'italic 900 78px "Arial Black", Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+    g.lineWidth = 12; g.strokeStyle = outline; g.strokeText(L.team, 512, 72, 440); g.fillStyle = ink; g.fillText(L.team, 512, 72, 440);
+    // sponsor tags front and back
+    g.font = 'italic 800 26px Arial, sans-serif';
+    for (const [x, t] of [[150, L.sponsor], [880, L.sponsor2]]) { const tw = Math.min(200, g.measureText(t).width + 26);
+      g.fillStyle = 'rgba(10,12,16,.8)'; g.fillRect(x - tw / 2, 46, tw, 40); g.fillStyle = '#fff'; g.fillText(t, x, 67, 190); }
+  });
+  const hood = canvasTex(256, 256, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = '#ffffff'; g.strokeStyle = '#0c0e12'; g.lineWidth = 10; g.beginPath(); g.arc(128, 128, 104, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.fillStyle = '#0c0e12'; g.font = 'italic 900 128px "Arial Black", Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(L.num), 126, 136, 180);
+  });
+  side.userData.keep = hood.userData.keep = true;
+  const r = { side, hood }; liveryCache.set(key, r); return r;
+}
 function setLook(c, look) {
-  const key = JSON.stringify(look); if (key === c.lookKey && c.model) return;
+  const liv = liveryOf(c), key = JSON.stringify(look) + liv.team + liv.num; if (key === c.lookKey && c.model) return;
   const keep = c.model && c.model.G.position.clone();
   if (c.model) { scene.remove(c.model.G); disposeModel(c.model); }
-  c.model = buildBuggy(look); c.lookKey = key; c.look = look; scene.add(c.model.G); if (keep) c.model.G.position.copy(keep);
+  c.model = buildBuggy(look, liv); c.model.wearU.wearAmt.value = c.wear = wearBase(c); c.lookKey = key; c.look = look; scene.add(c.model.G); if (keep) c.model.G.position.copy(keep);
 }
 function placeCar(c, i, lat) {
   i = (i + N) % N; c.x = TX[i] + NX[i] * lat; c.z = TZ[i] + NZ[i] * lat; c.h = HD[i]; c.idx = i; c.mi = i; c.sc = false; c.si = 0; c.y = Math.max(groundH(c.x, c.z), -0.55); c.gPrev = c.y;
@@ -211,6 +261,7 @@ function resetRace() {
   cars.forEach((c, k) => {
     placeCar(c, N - 7 - 7 * (k >> 1), k % 2 ? -3.6 : 3.6); c.dist = c.idx - N; c.lap = -1; c.finished = false; c.finishT = 0; c.bestLap = 0; c.coins = 0; c.nitro = 0.5; c.boostT = 0;
     c.lane = c.laneTarget = k % 2 ? -3.6 : 3.6; c.laneT = 2 + rand() * 3; c.wrongT = 0; c.drift = 0; c.auto = AUTO && c.ctrl === 'local'; c.net = null; c.reward = null; c.spin = 0;
+    if (c.model) { clearDamage(c.model.wearU); c.model.wearU.wearAmt.value = c.wear = wearBase(c); }
   });
   coins.forEach(c => c.t = 0); finishOrder = 0; raceT = 0;
 }
@@ -651,7 +702,7 @@ function renderPickers() {
 function setTrack(id, quiet) {
   if (!TRACK_IDS.includes(id) || id === trackId) return;
   trackId = id; if (!quiet) store.set('ccr_track', id);
-  buildWorld(id); if (music) music.setTheme(id); drawMini(); resetRace(); views.forEach(v => v.snap = true);
+  buildWorld(id); WEAR_GLOBAL.mudCol.value.set(MUD[id]); if (music) music.setTheme(id); drawMini(); resetRace(); views.forEach(v => v.snap = true);
   renderPickers(); if (screen === 'scrBoard') renderBoard(); if (screen === 'scrOnline') renderLobby();
 }
 function setTimeOfDay(n, quiet) { if (n === isNight) return; isNight = n; if (!quiet) store.set('ccr_night', n); setNight(n); renderPickers(); if (screen === 'scrOnline') renderLobby(); }

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-export const ASSETS = { ready: false, cars: {}, props: {}, tex: {}, nrm: {} };
+export const ASSETS = { ready: false, cars: {}, props: {}, tex: {}, nrm: {}, wear: {} };
 const BASE = 'assets/';
 
 // Blender stored the hand-picked sRGB colours as-is; convert so three's linear pipeline shows them as authored.
@@ -26,11 +26,13 @@ export async function loadAssets() {
   const draco = new DRACOLoader(); draco.setDecoderPath(BASE + 'draco/'); draco.setDecoderConfig({ type: 'wasm' });
   const loader = new GLTFLoader(); loader.setDRACOLoader(draco);
   const surf = ['sand', 'cracked', 'grass', 'snow', 'gravel'];
+  const WEAR = ['buggy_classic', 'buggy_sports', 'wheel_std', 'wheel_big'];
+  const wearTex = Promise.all(WEAR.map(n => loadTex(BASE + `wear_${n}.jpg`, false).then(t => { t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.userData.keep = true; ASSETS.wear[n] = t; })));
   const [cars, props, gate, ...tex] = await Promise.all([
     loadGLB(loader, BASE + 'cars.glb'), loadGLB(loader, BASE + 'props.glb'), loadGLB(loader, BASE + 'gate.glb'),
     ...surf.map(s => loadTex(BASE + `tex_${s}.jpg`, false)), ...surf.map(s => loadTex(BASE + `nrm_${s}.jpg`, false)),
   ]);
-  draco.dispose();
+  await wearTex; draco.dispose();
   cars.scene.updateMatrixWorld(true);
   for (const name of ['buggy_classic', 'buggy_sports', 'wheel_std', 'wheel_big', 'rocket']) {
     const o = cars.scene.getObjectByName(name); if (!o) throw new Error('missing ' + name);

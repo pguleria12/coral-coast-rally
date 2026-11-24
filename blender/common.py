@@ -180,3 +180,164 @@ def preview(path, objs, dist=9, elev=0.45, az=0.8, size=(900, 600), target=(0, 1
     sc.render.filepath = path
     bpy.ops.render.render(write_still=True)
     bpy.data.objects.remove(cam)
+
+
+def uv_unwrap(o, margin=0.01):
+    """Smart-project UVs so the object can carry baked textures (kept in the glTF export)."""
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.context.view_layer.objects.active = o
+    o.select_set(True)
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=margin, scale_to_bounds=True)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    o.select_set(False)
+
+
+def bake_wear(o, path, res=1024, mud_top=1.0, wheel=False, samples=48):
+    """Bake a packed wear map with Cycles: R = grime/ambient occlusion multiplier, G = edge scratches
+    (bare metal shows through), B = caked mud on the lower body (or the tread, for wheels).
+    The game multiplies/blends this over each car's own colours, so one map serves every livery."""
+    sc = bpy.context.scene
+    sc.render.engine = 'CYCLES'
+    sc.cycles.device = 'CPU'
+    sc.cycles.samples = samples
+    sc.render.bake.margin = 6
+    sc.view_settings.view_transform = 'Standard'
+    img = bpy.data.images.new(o.name + '_wear', res, res)
+    img.colorspace_settings.name = 'Non-Color'
+    m = bpy.data.materials.new('WearBake')
+    m.use_nodes = True
+    nt = m.node_tree
+    n, l = nt.nodes, nt.links
+    n.clear()
+
+    def node(kind, **inputs):
+        x = n.new(kind)
+        for k, v in inputs.items():
+            if isinstance(v, bpy.types.NodeSocket):
+                l.new(v, x.inputs[k])
+            else:
+                x.inputs[k].default_value = v
+        return x
+
+    def maprange(v, a, b, lo=0.0, hi=1.0):
+        return node('ShaderNodeMapRange', Value=v, **{'From Min': a, 'From Max': b, 'To Min': lo, 'To Max': hi}).outputs['Result']
+
+    def math_(op, a, b):
+        x = n.new('ShaderNodeMath')
+        x.operation = op
+        x.use_clamp = True
+        for i, v in enumerate((a, b)):
+            if isinstance(v, bpy.types.NodeSocket):
+                l.new(v, x.inputs[i])
+            else:
+                x.inputs[i].default_value = v
+        return x.outputs[0]
+
+    geo = n.new('ShaderNodeNewGeometry')
+    pos = geo.outputs['Position']
+    ao = n.new('ShaderNodeAmbientOcclusion')
+    ao.samples = 16
+    ao.inputs['Distance'].default_value = 0.6
+    big = node('ShaderNodeTexNoise', Vector=pos, Scale=1.8, Detail=4.0, Roughness=0.55).outputs['Fac']
+    fine = node('ShaderNodeTexNoise', Vector=pos, Scale=22.0, Detail=8.0, Roughness=0.7).outputs['Fac']
+    # R: grime collects in crevices (AO) plus broad blotches
+    grime = math_('MULTIPLY', maprange(ao.outputs['AO'], 0.15, 1.0, 0.42, 1.0), maprange(big, 0.3, 0.75, 0.82, 1.0))
+    # G: chipped edges and scattered scratches. Bevel-normal vs true normal marks convex edges
+    bev = n.new('ShaderNodeBevel')
+    bev.samples = 8
+    bev.inputs['Radius'].default_value = 0.05
+    dot = n.new('ShaderNodeVectorMath')
+    dot.operation = 'DOT_PRODUCT'
+    l.new(bev.outputs['Normal'], dot.inputs[0])
+    l.new(geo.outputs['Normal'], dot.inputs[1])
+    edge = maprange(dot.outputs['Value'], 0.995, 0.9)
+    chips = maprange(fine, 0.52, 0.62)
+    sc_vec = node('ShaderNodeVectorMath', Vector=pos)
+    sc_vec.operation = 'MULTIPLY'
+    sc_vec.inputs[1].default_value = (3.0, 3.0, 60.0)
+    lines = maprange(node('ShaderNodeTexNoise', Vector=sc_vec.outputs['Vector'], Scale=6.0, Detail=2.0).outputs['Fac'], 0.66, 0.72)
+    scratch = math_('MAXIMUM', math_('MULTIPLY', edge, chips), math_('MULTIPLY', lines, 0.6))
+    # B: mud splashed up from the wheels: strongest low down, broken up by noise
+    if wheel:
+        sep = node('ShaderNodeSeparateXYZ', Vector=pos)
+        rad = node('ShaderNodeVectorMath', Vector=pos)
+        rad.operation = 'LENGTH'
+        cyl = node('ShaderNodeCombineXYZ', X=0.0, Y=sep.outputs['Y'], Z=sep.outputs['Z'])
+        rlen = node('ShaderNodeVectorMath', Vector=cyl.outputs['Vector'])
+        rlen.operation = 'LENGTH'
+        low = maprange(rlen.outputs['Value'], 0.6, 0.95)
+    else:
+        sep = node('ShaderNodeSeparateXYZ', Vector=pos)
+        low = maprange(sep.outputs['Z'], mud_top, mud_top - 0.55)
+    splat = maprange(math_('ADD', math_('MULTIPLY', big, 0.6), math_('MULTIPLY', fine, 0.4)), 0.38, 0.55)
+    mud = math_('MULTIPLY', low, splat)
+    comb = node('ShaderNodeCombineColor', Red=grime, Green=scratch, Blue=mud)
+    em = node('ShaderNodeEmission', Color=comb.outputs['Color'])
+    outn = n.new('ShaderNodeOutputMaterial')
+    l.new(em.outputs[0], outn.inputs['Surface'])
+    tex = n.new('ShaderNodeTexImage')
+    tex.image = img
+    nt.nodes.active = tex
+    saved = list(o.data.materials)
+    for i in range(len(o.data.materials)):
+        o.data.materials[i] = m
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.context.view_layer.objects.active = o
+    o.select_set(True)
+    bpy.ops.object.bake(type='EMIT')
+    o.select_set(False)
+    for i, mm in enumerate(saved):
+        o.data.materials[i] = mm
+    img.filepath_raw = path
+    img.file_format = 'JPEG'
+    img.save()
+    return img
+
+
+def coilover(a, b, spring_m, shaft_m, body_m, r=0.075, turns=7):
+    """Coil-over shock between game points a (top mount) and b (lower mount): reservoir body, chrome shaft,
+    and a coil spring wound around it. Returns a list of mesh objects."""
+    A, B = P(*a), P(*b)
+    ax = (B - A)
+    L = ax.length
+    d = ax.normalized()
+    # any vector perpendicular to the axis, for winding the spring
+    u = d.cross(Vector((0, 0, 1)) if abs(d.z) < 0.9 else Vector((1, 0, 0))).normalized()
+    v = d.cross(u)
+    parts = []
+
+    def seg(p0, p1, rad, m, verts=12):
+        bpy.ops.mesh.primitive_cylinder_add(radius=rad, depth=(p1 - p0).length, vertices=verts, location=(p0 + p1) / 2)
+        o = bpy.context.active_object
+        o.rotation_euler = (p1 - p0).to_track_quat('Z', 'Y').to_euler()
+        return finish(o, m, 0, smooth=0.6)
+    parts.append(seg(A, A + d * L * 0.45, r * 0.62, body_m))               # damper body
+    parts.append(seg(A + d * L * 0.4, B, r * 0.28, shaft_m))               # chrome shaft
+    for p_, rr in ((A, r * 0.5), (B, r * 0.5)):                             # mount eyes
+        parts.append(seg(p_ - u * 0.06, p_ + u * 0.06, rr, body_m, 10))
+    pts = []
+    n = turns * 14
+    for i in range(n + 1):
+        t = i / n
+        ang = t * turns * 2 * math.pi
+        c = A + d * (L * (0.12 + 0.76 * t))
+        pts.append(c + (u * math.cos(ang) + v * math.sin(ang)) * r)
+    cu = bpy.data.curves.new('spring', 'CURVE')
+    cu.dimensions = '3D'
+    cu.bevel_depth = r * 0.22
+    cu.bevel_resolution = 2
+    sp = cu.splines.new('POLY')
+    sp.points.add(len(pts) - 1)
+    for i, p_ in enumerate(pts):
+        sp.points[i].co = (*p_, 1)
+    o = bpy.data.objects.new('spring', cu)
+    bpy.context.collection.objects.link(o)
+    bpy.context.view_layer.objects.active = o
+    o.select_set(True)
+    bpy.ops.object.convert(target='MESH')
+    o = bpy.context.active_object
+    o.select_set(False)
+    parts.append(finish(o, spring_m, 0, smooth=1.0))
+    return parts

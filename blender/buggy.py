@@ -2,7 +2,7 @@
 # Run: Blender -b --factory-startup -P blender/buggy.py -- <out_dir>
 # Proportions are locked to the game's physics: wheels at x=±1.08, z=+1.18 / -1.2, radius 0.62 (std tyres).
 # Material names are a contract with the game, which swaps in per-car paint/rim colours:
-#   Paint, Dark, Chrome, Lamp, Tail, Glass, Seat, Suit, Helmet, Visor, Accent, Tire, Rim
+#   Paint, Dark, Chrome, Lamp, Tail, Glass, Seat, Suit, Helmet, Visor, Accent, Tire, Rim, Spring
 import sys, os, math
 sys.path.insert(0, os.path.dirname(__file__))
 from common import *
@@ -23,6 +23,7 @@ VISOR = mat('Visor', (0.03, 0.04, 0.06), 0.08, 0.9)
 ACCENT = mat('Accent', (0.15, 0.45, 1.0), 0.35, 0.3)
 TIRE = mat('Tire', (0.03, 0.03, 0.035), 0.92, 0)
 RIM = mat('Rim', (0.2, 0.5, 1.0), 0.3, 0.5)
+SPRING = mat('Spring', (0.85, 0.06, 0.05), 0.35, 0.4)   # coil-over springs, race red on every car
 
 
 def driver(y, z, parts):
@@ -57,8 +58,8 @@ def classic():
     # side pods with intake vents
     for s in (-1, 1):
         p.append(box(0.32, 0.52, 1.9, (s * 0.84, 0.95, -0.15), PAINT, 0.1))
-        for k in range(3):
-            p.append(box(0.04, 0.05, 0.6, (s * 1.0, 0.85 + k * 0.11, 0.1), DARK, 0.01))
+        for k in range(3):   # intake vents at the back of the pod, leaving the panel clear for the team livery
+            p.append(box(0.04, 0.05, 0.22, (s * 1.0, 0.85 + k * 0.11, -0.98), DARK, 0.01))
         p.append(box(0.04, 0.1, 1.5, (s * 1.01, 1.12, -0.2), ACCENT, 0.02))
         # headlights: chrome bucket + lens
         p.append(cyl(0.13, 0.1, (s * 0.52, 1.02, 1.79), CHROME, axis='z', verts=20, bevel=0.015))
@@ -102,6 +103,10 @@ def classic():
         p.append(cyl(0.1, 0.03, (x, 2.3, 0.2), LAMP, axis='z', verts=16))
     # race number plate
     p.append(box(0.5, 0.36, 0.03, (0, 1.05, -1.71), ACCENT, 0.02))
+    # coil-over shocks just inboard of each wheel
+    for s in (-1, 1):
+        p += coilover((s * 0.74, 1.55, 1.0), (s * 0.78, 0.7, 1.18), SPRING, CHROME, DARK)
+        p += coilover((s * 0.7, 1.75, -1.0), (s * 0.79, 0.7, -1.2), SPRING, CHROME, DARK)
     return p
 
 
@@ -116,7 +121,7 @@ def sports():
     for s in (-1, 1):
         p.append(box(0.44, 0.42, 2.1, (s * 0.84, 0.86, -0.25), PAINT, 0.14))
         p.append(box(0.46, 0.08, 1.6, (s * 0.84, 1.1, -0.25), DARK, 0.03))
-        p.append(box(0.05, 0.22, 0.5, (s * 1.07, 0.84, 0.35), DARK, 0.02))       # side intake
+        p.append(box(0.05, 0.22, 0.3, (s * 1.07, 0.84, -1.1), DARK, 0.02))        # side intake (rear, clear of the livery)
         p.append(box(0.2, 0.06, 0.04, (s * 0.55, 1.1, -2.08), TAIL, 0.01))
         p.append(box(0.3, 0.12, 0.05, (s * 0.5, 0.92, 2.0), LAMP, 0.03, rx=0.2))
     p.append(box(1.0, 0.3, 1.25, (0, 0.92, -0.25), DARK, 0.06))                  # cockpit tub
@@ -137,6 +142,9 @@ def sports():
         p.append(cyl(0.095, 0.1, (s * 0.3, 1.1, -2.24), DARK, axis='z', verts=16))
     p.append(tube([(-0.44, 1.78, -0.86), (0.44, 1.78, -0.86)], 0.06, CHROME, 0.1))
     driver(1.5, -0.45, p)
+    for s in (-1, 1):
+        p += coilover((s * 0.8, 1.35, 1.0), (s * 0.82, 0.62, 1.18), SPRING, CHROME, DARK)
+        p += coilover((s * 0.74, 1.6, -1.05), (s * 0.8, 0.62, -1.2), SPRING, CHROME, DARK)
     return p
 
 
@@ -225,6 +233,11 @@ for o in (body_c, body_s, w_std, w_big, rk):
     print('TRIS', o.name, sum(len(f.vertices) - 2 for f in o.data.polygons))
 
 os.makedirs(out, exist_ok=True)
+# baked wear maps (grime / scratches / mud) for the bodies and tyres; the rocket stays clean
+for o, res, kw in ((body_c, 1024, {'mud_top': 1.15}), (body_s, 1024, {'mud_top': 1.0}), (w_std, 512, {'wheel': True}), (w_big, 512, {'wheel': True})):
+    uv_unwrap(o)
+    bake_wear(o, os.path.join(out, 'wear_' + o.name + '.jpg'), res, **kw)
+    print('BAKED', o.name)
 export_glb(os.path.join(out, 'cars.glb'), [body_c, body_s, w_std, w_big, rk])
 
 # previews: lay the parts out side by side
