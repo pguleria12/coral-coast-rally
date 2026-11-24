@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ASSETS } from './assets.js';
+import { LAYERS, splatMaterial, setSplatGrid, splatAt } from './surface.js';
 
 // ───────────────────────── helpers ─────────────────────────
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -618,7 +619,15 @@ export function buildWorld(id) {
     const nrm = geo.attributes.normal, C = new THREE.Color();
     for (let o = 0; o < GW * GW; o++) { T.paint(C, pos[o * 3], pos[o * 3 + 1], pos[o * 3 + 2], nrm.getY(o), DG[o]); col[o * 3] = C.r; col[o * 3 + 1] = C.g; col[o * 3 + 2] = C.b; }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const m = new THREE.Mesh(geo, std({ vertexColors: true, map: sandTex, roughness: 0.95, metalness: 0 })); m.material.map = sandTex; detailMaps(m.material, T.id);
+    // extra ground layers (dirt / mud / wet sand / slush), see src/surface.js
+    const LY = LAYERS[T.id], sp = new Float32Array(GW * GW * 2), sa = new Float32Array(GW * GW), sb = new Float32Array(GW * GW);
+    if (LY) for (let o = 0; o < GW * GW; o++) {
+      const x = pos[o * 3], h = pos[o * 3 + 1], z = pos[o * 3 + 2], ny = nrm.getY(o), d = DG[o];
+      const n1 = fbm(x * 0.03 + 11.3, z * 0.03 - 7.1), n2 = fbm(x * 0.11 - 3.7, z * 0.11 + 5.2);
+      sa[o] = sp[o * 2] = clamp(LY.A.w(x, h, z, ny, d, n1, n2), 0, 1); sb[o] = sp[o * 2 + 1] = clamp(LY.B.w(x, h, z, ny, d, n1, n2), 0, 1);
+    }
+    geo.setAttribute('splat', new THREE.BufferAttribute(sp, 2)); setSplatGrid({ a: sa, b: sb, GS, GN });
+    const m = new THREE.Mesh(geo, std({ vertexColors: true, map: sandTex, roughness: 0.95, metalness: 0 })); m.material.map = sandTex; detailMaps(m.material, T.id); splatMaterial(m.material, T.id);
     m.receiveShadow = true; W.add(m);
     if (!T.ocean) outerGround(T.edgeH, T.edgeCol);
   }
@@ -627,11 +636,12 @@ export function buildWorld(id) {
   {
     const LAT = [-10.5, -8, -4, 0, 4, 8, 10.5], C = LAT.length, pos = [], uv = [], idx = [], vrep = Math.round(TRACK_LEN / 14);
     for (let i = 0; i <= N; i++) { const j = i % N; for (let c = 0; c < C; c++) {
-      const x = TX[j] + NX[j] * LAT[c], z = TZ[j] + NZ[j] * LAT[c]; pos.push(x, groundH(x, z) + 0.07, z); uv.push(c / (C - 1), i / N * vrep);
+      const x = TX[j] + NX[j] * LAT[c], z = TZ[j] + NZ[j] * LAT[c]; pos.push(x, groundH(x, z) + 0.14, z); uv.push(c / (C - 1), i / N * vrep);
     } }
     for (let i = 0; i < N; i++) for (let c = 0; c < C - 1; c++) { const a = i * C + c, b = a + 1, d = a + C, e = d + 1; idx.push(a, d, b, b, d, e); }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.computeVertexNormals();
+    { const sp = []; for (let k = 0; k < pos.length; k += 3) { const w = splatAt(pos[k], pos[k + 2]); sp.push(w.a, w.b); } geo.setAttribute('splat', new THREE.Float32BufferAttribute(sp, 2)); }
     const [c0, c1, c2] = T.road;
     const tex = canvasTex(256, 256, (g, w, h) => {
       g.fillStyle = c0; g.fillRect(0, 0, w, h);
@@ -643,7 +653,7 @@ export function buildWorld(id) {
       g.fillStyle = gr; g.fillRect(0, 0, w, h);
     }, { repeat: true });
     const m = new THREE.Mesh(geo, std({ map: tex, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-    if (ASSETS.ready) { m.material.normalMap = ASSETS.nrm.gravel; m.material.normalScale.set(0.8, 0.8); }
+    if (ASSETS.ready) { m.material.normalMap = ASSETS.nrm.gravel; m.material.normalScale.set(0.8, 0.8); splatMaterial(m.material, T.id, true); }
     m.receiveShadow = true; m.renderOrder = 1; W.add(m);
   }
 

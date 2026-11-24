@@ -77,6 +77,10 @@ def node_graph(kind, nt):
         h = mix(ramp(voronoi(70, 'F1'), 0.6, 0.0), mix(noise(30, 6, 0.6), 0.0, 0.45), 0.55)
     elif kind == 'snow':     # soft drifts with a little crust
         h = mix(noise(6, 3, 0.4), mix(noise(110, 2), 0.0, 0.12), 0.88)
+    elif kind == 'mud':      # churned mud: soft lumps, shallow hollows that hold water, fine grit
+        h = mix(ramp(noise(7, 3, 0.45), 0.35, 0.7), mix(noise(55, 5, 0.6, 0.4), 0.0, 0.3), 0.7)
+    elif kind == 'dirt':     # packed dirt: small embedded stones, scuffed crust
+        h = mix(ramp(voronoi(26, 'F1', 0.9), 0.5, 0.08), mix(noise(40, 6, 0.55), 0.0, 0.5), 0.45)
     else:                    # gravel: packed pebbles in grit
         h = mix(ramp(voronoi(42, 'F1'), 0.55, 0.05), mix(noise(140, 3), 0.0, 0.35), 0.65)
     em = n.new('ShaderNodeEmission')
@@ -131,8 +135,8 @@ def save(name, rgb):
 
 
 os.makedirs(out, exist_ok=True)
-STRENGTH = {'sand': 3.0, 'cracked': 4.0, 'grass': 3.5, 'snow': 2.0, 'gravel': 5.0}
-for kind in ('sand', 'cracked', 'grass', 'snow', 'gravel'):
+STRENGTH = {'sand': 3.0, 'cracked': 4.0, 'grass': 3.5, 'snow': 2.0, 'gravel': 5.0, 'mud': 2.5, 'dirt': 4.0}
+for kind in ('sand', 'cracked', 'grass', 'snow', 'gravel', 'mud', 'dirt'):
     h = seamless(bake(kind))
     h = (h - h.min()) / max(1e-6, h.max() - h.min())
     # detail map: mostly bright so it only modulates the vertex colours

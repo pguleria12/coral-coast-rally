@@ -12,12 +12,13 @@ import { impact, crashTick, clearDebris, sparkMat } from './crash.js';
 import { makeWorn, wearUniforms, clearDamage, addDamage, WEAR_GLOBAL } from './wear.js';
 import { ASSETS, loadAssets } from './assets.js';
 import { clamp, lerp, wrapA, rand, canvasTex, LAPS, RW, WALL, MAXV, ACC, GRAV, SUN, AUTO, renderer, scene, camera, sky, sun, dummy, nearestIdx, groundH,
-  TX, TZ, HD, NX, NZ, VC, CURV, N, SP, pads, coins, coinMesh, buildWorld, worldTick, followWeather, gripAt, trackFrame, SC, THEMES, TRACK_IDS, setNight, theme, SCDBG } from './world.js';
+  TX, TZ, HD, NX, NZ, VC, CURV, N, SP, pads, coins, coinMesh, buildWorld, worldTick, followWeather, gripAt, trackFrame, SC, THEMES, TRACK_IDS, setNight, theme, SCDBG, trackDist } from './world.js';
+import { initTracks, clearTracks, trackMark, tracksTick, splatAt } from './surface.js';
 
 // build the last-used track (and time of day) before anything reads the track data
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 let trackId = TRACK_IDS.includes(lsGet('ccr_track', 'beach')) ? lsGet('ccr_track', 'beach') : 'beach', isNight = !!lsGet('ccr_night', false);
-setNight(isNight); buildWorld(trackId);
+setNight(isNight); buildWorld(trackId); initTracks(scene); clearTracks(trackId);
 
 // ───────────────────────── buggy models (classic / sports, tyre + rocket + glow options) ─────────────────────────
 const tireMat = new THREE.MeshStandardMaterial({ color: 0x1b1c20, roughness: 0.92 }), darkMat = new THREE.MeshStandardMaterial({ color: 0x23262c, roughness: 0.5, metalness: 0.6 });
@@ -139,7 +140,7 @@ function buildBuggy(look, liv) {
     body.add(tube(V(sx * 0.6, 0.85, z), new THREE.Vector3(x * 0.82, WR + 0.04, z), big ? 0.07 : 0.05, darkMat));
   }
   G.traverse(o => { if (o.isMesh) o.castShadow = o.material.blending !== THREE.AdditiveBlending; });
-  return { G, body, wheels, flames, wr: WR, wearU, dmgRoot };
+  return { G, body, wheels, flames, wr: WR, wx: WX, ww: WW, wearU, dmgRoot };
 }
 function disposeModel(m) { m.G.traverse(o => { if (o.isMesh) { if (!o.userData.sharedGeo) o.geometry.dispose(); if (!SHARED.has(o.material)) o.material.dispose(); } }); }
 
@@ -264,7 +265,7 @@ function resetRace() {
     c.lane = c.laneTarget = k % 2 ? -3.6 : 3.6; c.laneT = 2 + rand() * 3; c.wrongT = 0; c.drift = 0; c.auto = AUTO && c.ctrl === 'local'; c.net = null; c.reward = null; c.spin = 0;
     if (c.model) { clearDamage(c.model.wearU); c.model.wearU.wearAmt.value = c.wear = wearBase(c); }
   });
-  coins.forEach(c => c.t = 0); finishOrder = 0; raceT = 0; clearDebris();
+  coins.forEach(c => c.t = 0); finishOrder = 0; raceT = 0; clearDebris(); clearTracks(trackId); cars.forEach(c => c.marks = null);
 }
 const isHuman = (c) => c.ctrl === 'local' || (c.ctrl === 'remote' && !c.bot);
 
@@ -923,8 +924,25 @@ function updateCarVisual(c, dt) {
   c.model.body.position.y = Math.sin(time * 31 + c.k) * 0.012 * Math.min(1, Math.abs(c.vf) / 10);
   c.spin += c.vf / c.model.wr * dt;
   for (const w of c.model.wheels) { w.spin.rotation.x = c.spin; if (w.front) w.pivot.rotation.y = c.steer * 0.42; }
+  tyreMarks(c, dt);
   const b = c.boostT > 0; for (const f of c.model.flames) { f.visible = b; if (b) f.scale.set(1 + Math.random() * 0.5, 1 + Math.random() * 0.5, 0.8 + Math.random() * 0.8); }
   if (c.model.flames.glow) c.model.flames.glow.material.opacity = 0.7 + Math.sin(time * 6 + c.k) * 0.15;
+}
+// rear tyres press tracks into the ground; soft ground, sliding and wheelspin press deeper.
+// Driving through mud also cakes the car (more wear) until the next reset.
+const MUD_PICKUP = { country: 1, snow: 0.6, beach: 0.25, desert: 0.15 };
+function tyreMarks(c, dt) {
+  if (!c.marks) c.marks = [{}, {}];
+  const sh = Math.sin(c.h), ch = Math.cos(c.h), M = c.model, sp = Math.hypot(c.vx, c.vz);
+  const slide = clamp((Math.abs(c.vl) - 2) / 6, 0, 1), spinUp = c.boostT > 0 ? 0.15 : 0;
+  const soft = 0.45 + 0.5 * (c.off || 0);
+  for (let s = 0; s < 2; s++) {
+    const lx = (s ? -1 : 1) * M.wx, lz = -1.2, x = c.x + ch * lx + sh * lz, z = c.z - sh * lx + ch * lz, g = groundH(x, z);
+    const k = !c.grounded || sp < 1 || g < -0.1 ? 0 : clamp(soft + slide * 0.6 + spinUp, 0, 1) * Math.min(1, sp / 4);
+    trackMark(c.marks[s], x, g + (trackDist(x, z) < 10.8 ? 0.19 : 0.05), z, sh, ch, M.ww * 0.46, k);
+  }
+  if (c.grounded && sp > 4 && M.wearU) { const w = splatAt(c.x, c.z), pick = (MUD_PICKUP[trackId] || 0) * w.b * (c.off > 0 ? 1 : 0.5);
+    if (pick > 0.01) { c.wear = Math.min(1, c.wear + pick * dt * 0.025 * Math.min(1, sp / 20)); M.wearU.wearAmt.value = c.wear; } }
 }
 function updateCam(v, dt) {
   const P = v.car, cam = v.cam; if (!P) return;
@@ -991,7 +1009,7 @@ function frame(now) {
   for (const c of cars) { updateCarVisual(c, dt); if (c.hitT > 0) c.hitT -= dt; }
   coins.forEach((k, n) => { dummy.position.set(k.x, k.y + Math.sin(time * 3 + k.ph) * 0.15, k.z); dummy.rotation.set(0, time * 3.2 + k.ph, 0); dummy.scale.setScalar(k.t > 0 ? 0.0001 : 1); dummy.updateMatrix(); coinMesh.setMatrixAt(n, dummy.matrix); });
   coinMesh.instanceMatrix.needsUpdate = true;
-  updateParticles(dt); crashTick(dt, sparkMat.uniforms.uScale.value);
+  updateParticles(dt); crashTick(dt, sparkMat.uniforms.uScale.value); tracksTick();
   worldTick(dt, time); updateHeadlights();
   updateHUD(dt); updateAudio();
   // render every viewport with its own camera, shadows centred on its car

@@ -25,7 +25,7 @@ function loadTex(url, srgb) {
 export async function loadAssets() {
   const draco = new DRACOLoader(); draco.setDecoderPath(BASE + 'draco/'); draco.setDecoderConfig({ type: 'wasm' });
   const loader = new GLTFLoader(); loader.setDRACOLoader(draco);
-  const surf = ['sand', 'cracked', 'grass', 'snow', 'gravel'];
+  const surf = ['sand', 'cracked', 'grass', 'snow', 'gravel', 'mud', 'dirt'];
   const WEAR = ['buggy_classic', 'buggy_sports', 'wheel_std', 'wheel_big'];
   const wearTex = Promise.all(WEAR.map(n => loadTex(BASE + `wear_${n}.jpg`, false).then(t => { t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.userData.keep = true; ASSETS.wear[n] = t; })));
   const [cars, props, gate, debris, ...tex] = await Promise.all([
