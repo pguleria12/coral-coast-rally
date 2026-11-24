@@ -8,6 +8,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createNet } from './net.js';
 import { createMusic } from './music.js';
+import { impact, crashTick, clearDebris, sparkMat } from './crash.js';
 import { makeWorn, wearUniforms, clearDamage, addDamage, WEAR_GLOBAL } from './wear.js';
 import { ASSETS, loadAssets } from './assets.js';
 import { clamp, lerp, wrapA, rand, canvasTex, LAPS, RW, WALL, MAXV, ACC, GRAV, SUN, AUTO, renderer, scene, camera, sky, sun, dummy, nearestIdx, groundH,
@@ -263,7 +264,7 @@ function resetRace() {
     c.lane = c.laneTarget = k % 2 ? -3.6 : 3.6; c.laneT = 2 + rand() * 3; c.wrongT = 0; c.drift = 0; c.auto = AUTO && c.ctrl === 'local'; c.net = null; c.reward = null; c.spin = 0;
     if (c.model) { clearDamage(c.model.wearU); c.model.wearU.wearAmt.value = c.wear = wearBase(c); }
   });
-  coins.forEach(c => c.t = 0); finishOrder = 0; raceT = 0;
+  coins.forEach(c => c.t = 0); finishOrder = 0; raceT = 0; clearDebris();
 }
 const isHuman = (c) => c.ctrl === 'local' || (c.ctrl === 'remote' && !c.bot);
 
@@ -314,7 +315,7 @@ function stepCar(c, I, dt) {
   let dI = c.idx - old; if (dI > N / 2) dI -= N; if (dI < -N / 2) dI += N; c.dist += dI;
   const nx = F.nx, nz = F.nz, WL = F.wall, hd = F.hd; let lat = (c.x - F.px) * nx + (c.z - F.pz) * nz;
   if (Math.abs(lat) > WL) { const s = Math.sign(lat), over = lat - s * WL; c.x -= nx * over; c.z -= nz * over; lat = s * WL;
-    const vn = c.vx * nx + c.vz * nz; if (vn * s > 0) { c.vx -= nx * vn * 1.25; c.vz -= nz * vn * 1.25; c.vx *= 0.99; c.vz *= 0.99; }
+    const vn = c.vx * nx + c.vz * nz; if (vn * s > 0) { if (Math.abs(vn) > 6) crash(c, c.x + nx * s * 1.15, c.y + 0.8, c.z + nz * s * 1.15, -nx * s, -nz * s, (Math.abs(vn) - 6) / 16); c.vx -= nx * vn * 1.25; c.vz -= nz * vn * 1.25; c.vx *= 0.99; c.vz *= 0.99; }
     const fwd = Math.abs(wrapA(c.h - hd)) < Math.PI / 2 ? hd : hd + Math.PI;
     c.h += wrapA(fwd - c.h) * Math.min(1, 5 * dt); }
   c.lat = lat; c.off = clamp((Math.abs(lat) - F.rw - 0.5) / 3.5, 0, 1);
@@ -332,6 +333,17 @@ function stepCar(c, I, dt) {
   }
 }
 function land(c) { for (let k = 0; k < 14; k++) emitDust(c, true); if (c.view) c.view.shake = 0.35; }
+// a hard hit: sparks + Blender debris, a dust burst, a dent/scorch on the body that lasts until the next reset,
+// camera shake and (for local players) a crash sound and a buzz on phones
+const hitV = new THREE.Vector3();
+function crash(c, x, y, z, nx, nz, k) {
+  if (c.hitT > 0 || !c.model) return; k = clamp(k, 0, 1); c.hitT = 0.28;
+  impact(x, y, z, nx, nz, k, c.look ? c.look.paint : 0xcccccc, theme.dust);
+  const D = theme.dust; for (let i = 0; i < 6 + 10 * k; i++) emit(x, y - 0.4, z, nx * 3 + (Math.random() - 0.5) * 5, 1 + Math.random() * 3, nz * 3 + (Math.random() - 0.5) * 5, 0.8 + Math.random() * 0.6, 0.7 + Math.random() * 0.6, D[0], D[1], D[2], 0.35);
+  if (c.model.dmgRoot) { c.model.dmgRoot.updateWorldMatrix(true, false); hitV.set(x, y, z); c.model.dmgRoot.worldToLocal(hitV);
+    hitV.set(clamp(hitV.x, -0.95, 0.95), clamp(hitV.y, 0.8, 1.9), clamp(hitV.z, -1.9, 1.75)); addDamage(c.model.wearU, hitV, 0.35 + 0.65 * k); }
+  if (c.view) { c.view.shake = Math.max(c.view.shake, 0.3 + 0.9 * k); sfx.crash(k); if (touch.on && navigator.vibrate) try { navigator.vibrate(15 + Math.round(45 * k)); } catch (e) {} }
+}
 // remote cars: smooth towards the latest snapshot, extrapolated by its velocity
 const r2 = (v) => Math.round(v * 100) / 100;
 function packCar(c) { return [c.k, r2(c.x), r2(c.y), r2(c.z), r2(c.h), r2(c.vx), r2(c.vy), r2(c.vz), r2(c.vf), r2(c.vl), r2(c.steer), c.dist, c.boostT > 0 ? 1 : 0, c.finished ? r2(c.finishT) : 0, c.coins, r2(c.bestLap)]; }
@@ -404,6 +416,10 @@ const sfx = {
     f.frequency.setValueAtTime(300, t); f.frequency.exponentialRampToValueAtTime(3200, t + 0.5); g.gain.setValueAtTime(0.35, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.8); s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + 0.85); },
   win() { [523, 659, 784, 1047].forEach((f, k) => setTimeout(() => tone(f, f, 0.3, 'triangle', 0.16), k * 130)); },
   buy() { [660, 880, 1320].forEach((f, k) => setTimeout(() => tone(f, f * 1.01, 0.12, 'square', 0.06), k * 70)); },
+  crash(k) { if (!AC || muted) return; const t = AC.currentTime, s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain(); s.buffer = noiseBuf; f.type = 'lowpass';
+    f.frequency.setValueAtTime(5000, t); f.frequency.exponentialRampToValueAtTime(300, t + 0.35); g.gain.setValueAtTime(0.25 + 0.45 * k, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+    s.connect(f); f.connect(g); g.connect(master); s.start(t, Math.random()); s.stop(t + 0.5);
+    tone(90, 40, 0.25, 'sine', 0.35 + 0.3 * k); for (const fr of [520, 783, 1170]) tone(fr * (0.9 + Math.random() * 0.2), fr * 0.8, 0.18 + 0.2 * k, 'square', 0.03 + 0.03 * k); },
   ping() { tone(880, 1320, 0.18, 'triangle', 0.14); setTimeout(() => tone(1320, 1760, 0.22, 'triangle', 0.12), 160); },
 };
 function syncMusic() {
@@ -960,7 +976,8 @@ function frame(now) {
       for (let a = 0; a < cars.length; a++) for (let b = a + 1; b < cars.length; b++) { const A = cars[a], B = cars[b], dx = B.x - A.x, dz = B.z - A.z, d = Math.hypot(dx, dz);
         if (d < 2.7 && d > 0.001 && Math.abs(A.y - B.y) < 1.6) { const nx = dx / d, nz = dz / d, ra = A.ctrl === 'remote', rb = B.ctrl === 'remote'; if (ra && rb) continue;
           const wa = ra ? 0 : rb ? 1 : 0.5, wb = 1 - wa, o = 2.7 - d; A.x -= nx * o * wa; A.z -= nz * o * wa; B.x += nx * o * wb; B.z += nz * o * wb;
-          const rv = (B.vx - A.vx) * nx + (B.vz - A.vz) * nz; if (rv < 0) { const j = -rv * 0.65 * 2; A.vx -= nx * j * wa; A.vz -= nz * j * wa; B.vx += nx * j * wb; B.vz += nz * j * wb; } } }
+          const rv = (B.vx - A.vx) * nx + (B.vz - A.vz) * nz; if (rv < -5) { const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2 + 0.85, mz = (A.z + B.z) / 2, k = (-rv - 5) / 14; crash(A, mx, my, mz, -nx, -nz, k); crash(B, mx, my, mz, nx, nz, k); }
+          if (rv < 0) { const j = -rv * 0.65 * 2; A.vx -= nx * j * wa; A.vz -= nz * j * wa; B.vx += nx * j * wb; B.vz += nz * j * wb; } } }
     }
     for (const L of locals) { const c = L.car, i = c.idx, along = c.vx * Math.sin(HD[i]) + c.vz * Math.cos(HD[i]); c.wrongT = along < -4 && !c.sc ? c.wrongT + dt : 0; }
     for (const k of coins) { if (k.t > 0) { k.t -= dt; continue; }
@@ -971,10 +988,10 @@ function frame(now) {
     netTick(dt);
     if (resultsOpen) { resultsT -= dt; if (resultsT <= 0) { resultsT = 0.5; renderResults(); } }
   }
-  for (const c of cars) updateCarVisual(c, dt);
+  for (const c of cars) { updateCarVisual(c, dt); if (c.hitT > 0) c.hitT -= dt; }
   coins.forEach((k, n) => { dummy.position.set(k.x, k.y + Math.sin(time * 3 + k.ph) * 0.15, k.z); dummy.rotation.set(0, time * 3.2 + k.ph, 0); dummy.scale.setScalar(k.t > 0 ? 0.0001 : 1); dummy.updateMatrix(); coinMesh.setMatrixAt(n, dummy.matrix); });
   coinMesh.instanceMatrix.needsUpdate = true;
-  updateParticles(dt);
+  updateParticles(dt); crashTick(dt, sparkMat.uniforms.uScale.value);
   worldTick(dt, time); updateHeadlights();
   updateHUD(dt); updateAudio();
   // render every viewport with its own camera, shadows centred on its car
@@ -983,7 +1000,7 @@ function frame(now) {
   for (let i = 0; i < n; i++) {
     const v = views[i], r = v.rect, P = v.car || cars[5]; updateCam(v, dt);
     const yGL = H - r.y - r.h; renderer.setViewport(r.x, yGL, r.w, r.h); renderer.setScissor(r.x, yGL, r.w, r.h);
-    pMat.uniforms.uScale.value = r.h * pr * 0.9; sky.position.copy(v.cam.position);
+    pMat.uniforms.uScale.value = sparkMat.uniforms.uScale.value = r.h * pr * 0.9; sky.position.copy(v.cam.position);
     sun.target.position.set(Math.round(P.x / 4) * 4, P.y, Math.round(P.z / 4) * 4); sun.position.copy(sun.target.position).addScaledVector(SUN, 190);
     followWeather(v.cam, r.h * pr * 0.9); aimHeadlight(i, v.car);
     v.composer.render(dt);
@@ -998,7 +1015,7 @@ function frame(now) {
   else { me = newProfile('Racer'); if (legacy && !me.best) me.best = legacy; setupSolo(); showScreen('scrNick'); }
   resetRace(); applyQuality();
 }
-window.__game = { SCDBG, get SC() { return SC; }, get N() { return N; }, get SP() { return SP; }, get track() { return trackId; }, setTrack, setTimeOfDay, placeCar, cars, views, get locals() { return locals; }, get state() { return state; }, get mode() { return mode; }, get raceT() { return raceT; }, startRace, setupSplit, getProfile, get me() { return me; }, net, renderer, profiles, board, ASSETS, setLook, createMusic, get AC() { return AC; } };
+window.__game = { SCDBG, get SC() { return SC; }, get N() { return N; }, get SP() { return SP; }, get track() { return trackId; }, setTrack, setTimeOfDay, placeCar, cars, views, get locals() { return locals; }, get state() { return state; }, get mode() { return mode; }, get raceT() { return raceT; }, startRace, setupSplit, getProfile, get me() { return me; }, net, renderer, profiles, board, ASSETS, setLook, createMusic, crash, get AC() { return AC; } };
 requestAnimationFrame(frame);
 
 // Blender assets stream in after the first frame; once ready, rebuild the world and the buggies with them.

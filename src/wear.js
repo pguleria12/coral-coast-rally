@@ -49,9 +49,9 @@ export function makeWorn(m, tex, U, scr = 1, decal = null) {
       .replace('#include <map_fragment>', `#include <map_fragment>
         vec3 wr = texture2D(wearMap, vUv).rgb;
         float dm = 0.0;
-        for (int i = 0; i < ${MAX_DMG}; i++) { float d = length(vWearPos - dmg[i].xyz) + (wNoise(vWearPos * 7.0) - 0.5) * 0.45; dm = max(dm, dmg[i].w * (1.0 - smoothstep(0.12, 0.8, d))); }
+        for (int i = 0; i < ${MAX_DMG}; i++) { float d = length(vWearPos - dmg[i].xyz) + (wNoise(vWearPos * 7.0) - 0.5) * 0.5; dm = max(dm, dmg[i].w * (1.0 - smoothstep(0.25, 1.05, d))); }
         float mudK = clamp(wr.b * (0.3 + wearAmt) * 1.7, 0.0, 1.0);
-        float scrK = clamp(wr.g * (0.3 + wearAmt) * 2.0 + dm * smoothstep(0.42, 0.6, wNoise(vWearPos * vec3(30.0, 30.0, 4.0))), 0.0, 1.0) * wearScr;
+        float scrK = clamp(wr.g * (0.3 + wearAmt) * 2.0 + dm * smoothstep(0.3, 0.55, wNoise(vWearPos * vec3(26.0, 26.0, 3.0))), 0.0, 1.0) * wearScr;
         diffuseColor.rgb *= mix(1.0, wr.r * wr.r, min(1.0, 0.45 + wearAmt));
         #ifdef WEAR_DECAL
         { vec3 an = normalize(vWearNrm);
@@ -63,14 +63,15 @@ export function makeWorn(m, tex, U, scr = 1, decal = null) {
             if (q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0) { vec4 dc = texture2D(decalHood, q); diffuseColor.rgb = mix(diffuseColor.rgb, dc.rgb, dc.a); } } }
         #endif
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.5, 0.51, 0.53), scrK);
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.035, 0.03, 0.028), dm * 0.6 * smoothstep(0.3, 0.7, wNoise(vWearPos * 3.0 + 4.0)));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.03, 0.026, 0.024), dm * 0.85 * smoothstep(0.25, 0.6, wNoise(vWearPos * 4.0 + 4.0)));
+        diffuseColor.rgb *= 1.0 - 0.35 * dm;
         diffuseColor.rgb = mix(diffuseColor.rgb, mudCol * (0.75 + 0.5 * wNoise(vWearPos * 11.0)), mudK);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(roughnessFactor, 0.4, scrK * 0.6); roughnessFactor = mix(roughnessFactor, 0.95, max(mudK, dm * 0.5));`)
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
         metalnessFactor = mix(metalnessFactor, 0.9, scrK); metalnessFactor *= 1.0 - mudK;`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-        if (dm > 0.01) normal = normalize(normal + dm * 0.55 * vec3(wNoise(vWearPos * 6.0) - 0.5, wNoise(vWearPos * 6.0 + 9.0) - 0.5, 0.0));`)
+        if (dm > 0.01) normal = normalize(normal + dm * 1.1 * vec3(wNoise(vWearPos * 6.0) - 0.5, wNoise(vWearPos * 6.0 + 9.0) - 0.5, 0.0));`)
       .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
         #ifdef USE_CLEARCOAT
           material.clearcoat *= 1.0 - max(mudK, max(scrK, dm));

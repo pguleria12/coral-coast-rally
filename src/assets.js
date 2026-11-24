@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-export const ASSETS = { ready: false, cars: {}, props: {}, tex: {}, nrm: {}, wear: {} };
+export const ASSETS = { ready: false, cars: {}, props: {}, tex: {}, nrm: {}, wear: {}, debris: {} };
 const BASE = 'assets/';
 
 // Blender stored the hand-picked sRGB colours as-is; convert so three's linear pipeline shows them as authored.
@@ -28,8 +28,8 @@ export async function loadAssets() {
   const surf = ['sand', 'cracked', 'grass', 'snow', 'gravel'];
   const WEAR = ['buggy_classic', 'buggy_sports', 'wheel_std', 'wheel_big'];
   const wearTex = Promise.all(WEAR.map(n => loadTex(BASE + `wear_${n}.jpg`, false).then(t => { t.flipY = false; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.userData.keep = true; ASSETS.wear[n] = t; })));
-  const [cars, props, gate, ...tex] = await Promise.all([
-    loadGLB(loader, BASE + 'cars.glb'), loadGLB(loader, BASE + 'props.glb'), loadGLB(loader, BASE + 'gate.glb'),
+  const [cars, props, gate, debris, ...tex] = await Promise.all([
+    loadGLB(loader, BASE + 'cars.glb'), loadGLB(loader, BASE + 'props.glb'), loadGLB(loader, BASE + 'gate.glb'), loadGLB(loader, BASE + 'debris.glb'),
     ...surf.map(s => loadTex(BASE + `tex_${s}.jpg`, false)), ...surf.map(s => loadTex(BASE + `nrm_${s}.jpg`, false)),
   ]);
   await wearTex; draco.dispose();
@@ -56,6 +56,8 @@ export async function loadAssets() {
     g.deleteAttribute('uv'); g.computeBoundingSphere(); g.userData.keep = true;
     ASSETS.props[o.name] = g;
   });
+  debris.scene.updateMatrixWorld(true);
+  debris.scene.traverse(o => { if (!o.isMesh) return; const g = o.geometry.clone(); g.applyMatrix4(o.matrixWorld); g.computeBoundingSphere(); g.userData.keep = true; ASSETS.debris[o.name] = g; });
   surf.forEach((s, i) => { ASSETS.tex[s] = tex[i]; ASSETS.nrm[s] = tex[i + surf.length]; tex[i].userData.keep = tex[i + surf.length].userData.keep = true; });
   ASSETS.ready = true;
   return ASSETS;
